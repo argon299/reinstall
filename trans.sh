@@ -46,6 +46,8 @@ warn() {
 
 error_and_exit() {
     error "$@"
+    echo "Run '/trans.sh' to retry." >&2
+    echo "Run '/trans.sh alpine' to install Alpine Linux instead." >&2
     exit 1
 }
 
@@ -53,10 +55,12 @@ trap_err() {
     line_no=$1
     ret_no=$2
 
-    error "Line $line_no return $ret_no"
-    if [ -f "/trans.sh" ]; then
-        sed -n "$line_no"p /trans.sh
-    fi
+    error_and_exit "$(
+        echo "Line $line_no return $ret_no"
+        if [ -f "/trans.sh" ]; then
+            sed -n "$line_no"p /trans.sh
+        fi
+    )"
 }
 
 is_run_from_locald() {
@@ -772,7 +776,7 @@ to_lower() {
 }
 
 del_cr() {
-    sed 's/\r//g'
+    sed 's/\r$//'
 }
 
 del_comment_lines() {
@@ -818,8 +822,9 @@ del_invalid_efi_entry() {
     done < <(efibootmgr | grep 'HD(.*,GPT,')
 }
 
+# reinstall.sh 有同名方法
 grep_efi_index() {
-    awk -F '*' '{print $1}' | sed 's/Boot//'
+    awk '{print $1}' | sed -e 's/Boot//' -e 's/\*//'
 }
 
 # 某些机器可能不会回落到 bootx64.efi
@@ -3884,15 +3889,17 @@ chroot_apt_remove() {
 
     # 不能用 apt remove --purge -y xxx yyy
     # 因为如果索引里没有其中一个，会报错，另一个也不会删除
-    # 因此需要分开删除
-    for package in "$@"; do
+    local pkgs=
+    for pkg in "$@"; do
         # apt list 会提示 WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
         # 但又不能用 apt-get list
-        if chroot $os_dir apt list --installed "$package" | grep -q installed; then
-            # 删除 resolvconf 时会弹出建议重启，因此添加 noninteractive
-            DEBIAN_FRONTEND=noninteractive chroot $os_dir apt-get remove --purge -y "$package"
+        if chroot $os_dir apt list --installed "$pkg" | grep -q installed; then
+            pkgs="$pkgs $pkg"
         fi
     done
+
+    # 删除 resolvconf 时会弹出建议重启，因此添加 noninteractive
+    DEBIAN_FRONTEND=noninteractive chroot $os_dir apt-get remove --purge --allow-remove-essential -y $pkgs
 }
 
 chroot_apt_autoremove() {
@@ -4237,8 +4244,12 @@ EOF
         fi
 
         # 主 grub.cfg
-        # --update-bls-cmdline
-        chroot /os/ grub2-mkconfig -o "$grub_o_cfg"
+        if ls /os/boot/loader/entries/*.conf >/dev/null 2>&1 &&
+            chroot /os/ grub2-mkconfig --help | grep -q update-bls-cmdline; then
+            chroot /os/ grub2-mkconfig -o "$grub_o_cfg" --update-bls-cmdline
+        else
+            chroot /os/ grub2-mkconfig -o "$grub_o_cfg"
+        fi
 
         # 网络配置
         # el7/8 sysconfig
@@ -4360,6 +4371,24 @@ configfile \$prefix/grub.cfg
 EOF
         fi
 
+        # 避免 do-release-upgrade 时自动执行 dpkg-reconfigure grub-xx 但是 efi/biosgrub 分区不存在而导致报错
+        # shellcheck disable=SC2046
+        chroot_apt_remove $os_dir $(is_efi && echo 'grub-pc' || echo 'grub-efi*' 'shim*')
+        chroot_apt_autoremove $os_dir
+
+        # 安装 mbr
+        if ! is_efi; then
+            if false; then
+                # debconf-show grub-pc
+                # 每次开机硬盘名字可能不一样，但是 debian netboot 安装后也是设置了 grub-pc/install_devices
+                echo grub-pc grub-pc/install_devices multiselect /dev/$xda | chroot $os_dir debconf-set-selections # 22.04
+                echo grub-pc grub-pc/cloud_style_installation boolean true | chroot $os_dir debconf-set-selections # 24.04
+                chroot $os_dir dpkg-reconfigure -f noninteractive grub-pc
+            else
+                chroot $os_dir grub-install /dev/$xda
+            fi
+        fi
+
         # 自带内核：
         # 常规版本             generic
         # minimal 20.04/22.04 kvm      # 后台 vnc 无显示
@@ -4440,11 +4469,6 @@ EOF
             if [ -z "$(cat $file)" ]; then
                 rm -f $file
             fi
-        fi
-
-        # 安装 bios 引导
-        if ! is_efi; then
-            chroot $os_dir grub-install /dev/$xda
         fi
 
         # 更改 efi 目录的 grub.cfg 写死的 fsuuid
@@ -5112,6 +5136,8 @@ get_cloud_vendor() {
         echo huawei
     elif is_dmi_contains 'Alibaba Cloud'; then
         echo aliyun
+    elif is_dmi_contains 'Tencent Cloud'; then
+        echo qcloud
     fi
 }
 
@@ -5394,9 +5420,25 @@ install_windows() {
         if is_virt_contains virtio; then
             if [ "$vendor" = aliyun ] && is_nt_ver_ge 6.1 && [ "$arch_wim" = x86_64 ]; then
                 add_driver_aliyun_virtio
-                # 未测试是否需要专用驱动
+            elif [ "$vendor" = qcloud ] && is_nt_ver_ge 6.1 && [ "$arch_wim" = x86_64 ]; then
+                add_driver_qcloud_virtio
+            # 未测试是否需要专用驱动
             elif false && [ "$vendor" = huawei ] && is_nt_ver_ge 6.0 && { [ "$arch_wim" = x86 ] || [ "$arch_wim" = x86_64 ]; }; then
                 add_driver_huawei_virtio
+
+            # gcp 官方驱动不全，需要用公版补全
+            elif [ "$vendor" = gcp ] && [ "$nt_ver" = 6.1 ] && [ "$arch_wim" = x86_64 ]; then
+                add_driver_gcp_virtio_win6_1_sha1_x64
+                add_driver_generic_virtio \( -iname viorng.inf -or -iname balloon.inf \)
+
+            elif [ "$vendor" = gcp ] && is_nt_ver_ge 6.2 && [ "$arch_wim" = x86 ]; then
+                add_driver_gcp_virtio
+                add_driver_generic_virtio \( -iname viorng.inf -or -iname pvpanic.inf \)
+
+            elif [ "$vendor" = gcp ] && is_nt_ver_ge 6.2 && [ "$arch_wim" = x86_64 ]; then
+                add_driver_gcp_virtio
+                add_driver_generic_virtio -iname viorng.inf
+
             else
                 # 兜底
                 add_driver_generic_virtio
@@ -5414,10 +5456,11 @@ install_windows() {
         fi
 
         # vmd
-        # 改进: 像检测 virtio 那样直接从 /sys 检测设备
-        # inf 有要求 19041 或以上
-        if [ "$build_ver" -ge 19041 ] && [ "$arch_wim" = x86_64 ] &&
-            is_lspci_contains 'Volume Management Device'; then
+        # RST v17 不支持 vmd
+        # RST v18 inf 要求 15063 或以上
+        # RST v19 inf 要求 15063 或以上
+        # RST v20 inf 要求 19041 或以上
+        if [ -d /sys/module/vmd ] && [ "$build_ver" -ge 15063 ] && [ "$arch_wim" = x86_64 ]; then
             add_driver_vmd
         fi
 
@@ -5729,7 +5772,7 @@ EOF
             mount -o ro $drv/virtio.iso $drv/virtio
 
             # -not -ipath "*/balloon/*"
-            cp_drivers $drv/virtio -ipath "*/$virtio_sys/$arch/*"
+            cp_drivers $drv/virtio -ipath "*/$virtio_sys/$arch/*" "$@"
         else
             # coreutils 的 cp mv rm 才有 -v 参数
             apk add 7zip file coreutils
@@ -5775,8 +5818,52 @@ EOF
                     mv -v "$file" "$new_file"
                 done
             )
-            cp_drivers $drv/virtio
+            cp_drivers $drv/virtio "$@"
         fi
+    }
+
+    add_driver_qcloud_virtio() {
+        info "Add drivers: QCloud virtio"
+
+        # 测试版?
+        # https://mirrors.tencent.com/install/cts/windows/Drivers.zip
+
+        apk add 7zip
+        download https://mirrors.tencent.com/install/windows/virtio_64_1.0.9.exe $drv/virtio.exe
+        exclude='$*' # 排除 $PLUGINSDIR
+        override=u   # A(u)to rename all
+        7z x $drv/virtio.exe -o$drv/qcloud/ -ao$override -x!$exclude
+
+        # balloon     6.2
+        # balloon_1   6.1
+
+        # netkvm      10.0
+        # netkvm_1    6.1
+        # netkvm_2    6.3
+
+        # viostor     10.0
+        # viostor_1   6.1
+        # viostor_2   6.2
+
+        drivers=$(
+            case "$nt_ver" in
+            6.1) echo balloon_1 netkvm_1 viostor_1 ;; # sha1
+            6.2) echo balloon netkvm_1 viostor_2 ;;
+            6.3) echo balloon netkvm_2 viostor_2 ;;
+            *) echo balloon netkvm viostor ;;
+            esac
+        )
+
+        for old_name in $drivers; do
+            part=${old_name%%_*}
+            if ! [ "$old_name" = "$part" ]; then
+                find $drv/qcloud/$part -type f -iname "$old_name.*" | while read -r file; do
+                    ext="${file##*.}"
+                    mv -v "$file" "$drv/qcloud/$part/$part.$ext"
+                done
+            fi
+            cp_drivers $drv/qcloud/$part/$part.inf
+        done
     }
 
     add_driver_huawei_virtio() {
@@ -5863,35 +5950,83 @@ EOF
         fi
     }
 
-    # gcp
-    # x86 x86_64 arm64 都有
-    add_driver_gcp() {
-        info "Add drivers: GCP"
+    # gcp virtio win7 x64
+    # 缺 balloon viorng
+    add_driver_gcp_virtio_win6_1_sha1_x64() {
+        info "Add drivers: GCP virtio win6.1 sha1 x64"
 
+        mkdir -p $drv/gce/win6.1sha1
+        for file in \
+            WdfCoInstaller01009.dll WdfCoInstaller01011.dll \
+            netkvm.inf netkvm.cat netkvm.sys netkvmco.dll \
+            nvme.inf nvme64.cat nvme.sys \
+            pvpanic.inf pvpanic.sys pvpanic.cat \
+            vioscsi.inf vioscsi.sys vioscsi.cat; do
+            download https://storage.googleapis.com/gce-windows-drivers-public/win6.1sha1/$file $drv/gce/win6.1sha1/$file
+        done
+        cp_drivers $drv/gce/win6.1sha1
+    }
+
+    # gcp virtio win8+
+    # x86 缺 viorng pvpanic
+    # x64 缺 viorng
+    # https://github.com/GoogleCloudPlatform/compute-image-tools/tree/master/daisy_workflows/image_build/windows
+    # 官方是从 https://console.cloud.google.com/storage/browser/gce-windows-drivers-public 下载驱动，安装系统后再 googet 更新驱动
+    # 我们一步到位从 googet 下载驱动
+    add_driver_gcp_virtio() {
+        info "Add drivers: GCP virtio"
+
+        mkdir -p $drv/gce
         gce_repo=https://packages.cloud.google.com/yuck
-        download $gce_repo/repos/google-compute-engine-stable/index /tmp/gce.json
-        for name in gvnic gga; do
-            # gvnic 没有 arm64
-            if [ "$name" = gvnic ] && [ "$arch_wim" = arm64 ]; then
+        download $gce_repo/repos/google-compute-engine-stable/index $drv/gce/gce.json
+        for part in balloon netkvm pvpanic vioscsi; do
+            # gcp 提供的 pvpanic 没有 x86 驱动
+            if [ "$part" = pvpanic ] && [ "$arch_wim" = x86 ]; then
                 continue
             fi
 
-            mkdir -p $drv/gce/$name
-            link=$(grep -o "/pool/.*-google-compute-engine-driver-$name.*\.goo" /tmp/gce.json)
-            wget $gce_repo$link -O- | tar xz -C $drv/gce/$name
+            mkdir -p $drv/gce/$part
+            link=$(grep -o "/pool/.*-google-compute-engine-driver-$part.*\.goo" $drv/gce/gce.json)
+            wget $gce_repo$link -O- | tar xz -C $drv/gce/$part
 
-            # 没有 win6.0 文件夹
-            # 但 inf 没限制
-            # TODO: 测试是否可用
+            [ "$arch_wim" = x86 ] && suffix=-32 || suffix=
+            cp_drivers $drv/gce/$part -ipath "*/win$nt_ver$suffix/*"
+        done
+    }
+
+    # gcp
+    # x86 x86_64 arm64 都有
+    # win7 驱动是 sha256 签名
+    add_driver_gcp() {
+        info "Add drivers: GCP"
+
+        # https://packages.cloud.google.com/yuck/repos/google-compute-engine-stable/index
+        # https://packages.cloud.google.com/yuck/repos/google-compute-engine-driver-gvnic-gq-stable/index
+        # 官方镜像的 gvnic 是从 gvnic-gq-stable 获取的，版本低一点，但更稳定?
+
+        mkdir -p $drv/gce
+        gce_repo=https://packages.cloud.google.com/yuck
+        download $gce_repo/repos/google-compute-engine-stable/index $drv/gce/gce.json
+        for part in gvnic gga; do
+            # gvnic 没有 arm64
+            if [ "$part" = gvnic ] && [ "$arch_wim" = arm64 ]; then
+                continue
+            fi
+
+            mkdir -p $drv/gce/$part
+            link=$(grep -o "/pool/.*-google-compute-engine-driver-$part.*\.goo" $drv/gce/gce.json)
+            wget $gce_repo$link -O- | tar xz -C $drv/gce/$part
+
+            # inf 不限版本，6.0 能装 6.1 的驱动但用不了
             if false; then
                 for suffix in '' '-32'; do
-                    if [ -d "$drv/gce/$name/win6.1$suffix" ]; then
-                        cp -r "$drv/gce/$name/win6.1$suffix" "$drv/gce/$name/win6.0$suffix"
+                    if [ -d "$drv/gce/$part/win6.1$suffix" ]; then
+                        cp -r "$drv/gce/$part/win6.1$suffix" "$drv/gce/$part/win6.0$suffix"
                     fi
                 done
             fi
 
-            case "$name" in
+            case "$part" in
             gvnic)
                 [ "$arch_wim" = x86 ] && suffix=-32 || suffix=
                 cp_drivers $drv/gce/gvnic -ipath "*/win$nt_ver$suffix/*"
@@ -5915,7 +6050,12 @@ EOF
 
     add_driver_vmd() {
         apk add 7zip
-        download https://downloadmirror.intel.com/820815/SetupRST.exe $drv/SetupRST.exe
+        if [ "$build_ver" -ge 19041 ]; then
+            url=https://downloadmirror.intel.com/849939/SetupRST.exe # RST v20
+        elif [ "$build_ver" -ge 15063 ]; then
+            url=https://downloadmirror.intel.com/849934/SetupRST.exe # RST v19
+        fi
+        download $url $drv/SetupRST.exe
         7z x $drv/SetupRST.exe -o$drv/SetupRST -i!.text
         7z x $drv/SetupRST/.text -o$drv/vmd
         cp_drivers $drv/vmd

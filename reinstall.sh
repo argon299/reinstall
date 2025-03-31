@@ -149,13 +149,13 @@ is_in_china() {
 
     if [ -z "$_loc" ]; then
         # www.cloudflare.com/dash.cloudflare.com 国内访问的是美国服务器，而且部分地区被墙
-        # 备用 www.bose.cn
-        # 备用 www.qualcomm.cn
+        # 没有ipv6 www.visa.cn
+        # 没有ipv6 www.bose.cn
+        # 没有ipv6 www.garmin.com.cn
         # 备用 www.prologis.cn
-        # 备用 www.garmin.com.cn
         # 备用 www.autodesk.com.cn
         # 备用 www.keysight.com.cn
-        if ! _loc=$(curl -L http://www.visa.cn/cdn-cgi/trace | grep '^loc=' | cut -d= -f2 | grep .); then
+        if ! _loc=$(curl -L http://www.qualcomm.cn/cdn-cgi/trace | grep '^loc=' | cut -d= -f2 | grep .); then
             error_and_exit "Can not get location."
         fi
         echo "Location: $_loc" >&2
@@ -2164,7 +2164,9 @@ to_lower() {
 }
 
 del_cr() {
-    sed 's/\r//g'
+    # wmic/reg 换行符是 \r\r\n
+    # wmic nicconfig where InterfaceIndex=$id get MACAddress,IPAddress,IPSubnet,DefaultIPGateway | hexdump -c
+    sed -E 's/\r+$//'
 }
 
 del_empty_lines() {
@@ -2588,6 +2590,7 @@ grep_efi_entry() {
     grep -E '^Boot[0-9a-fA-F]{4}'
 }
 
+# trans.sh 有同名方法
 grep_efi_index() {
     awk '{print $1}' | sed -e 's/Boot//' -e 's/\*//'
 }
@@ -2645,7 +2648,7 @@ install_grub_linux_efi() {
     info 'download grub efi'
 
     # fedora 39 的 efi 无法识别 opensuse tumbleweed 的 xfs
-    efi_distro=opensuse
+    efi_distro=fedora
     grub_efi=$(get_grub_efi_filename)
 
     # 不要用 download.opensuse.org 和 download.fedoraproject.org
@@ -2657,7 +2660,7 @@ install_grub_linux_efi() {
     # https://mirror.fcix.net/opensuse/tumbleweed/repo/oss/EFI/BOOT/bootx64.efi
     # https://mirror.fcix.net/opensuse/tumbleweed/appliances/openSUSE-Tumbleweed-Minimal-VM.x86_64-Cloud.qcow2
     if [ "$efi_distro" = fedora ]; then
-        fedora_ver=40
+        fedora_ver=41
 
         if is_in_china; then
             mirror=https://mirror.nju.edu.cn/fedora

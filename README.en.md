@@ -4,7 +4,7 @@
 
 [![Codacy](https://img.shields.io/codacy/grade/dc679a17751448628fe6d8ac35e26eed?logo=Codacy&label=Codacy&style=flat-square)](https://app.codacy.com/gh/bin456789/reinstall/dashboard)
 [![CodeFactor](https://img.shields.io/codefactor/grade/github/bin456789/reinstall?logo=CodeFactor&logoColor=white&label=CodeFactor&style=flat-square)](https://www.codefactor.io/repository/github/bin456789/reinstall)
-[![Lines of Code](https://tokei.rs/b1/github/bin456789/reinstall?category=code&label=Lines%20of%20Code&style=flat-square)](https://github.com/XAMPPRocky/tokei)
+[![Lines of Code](https://tokei.rs/b1/github/bin456789/reinstall?category=code&label=Lines%20of%20Code&style=flat-square)](https://github.com/XAMPPRocky/tokei_rs)
 [![Telegram Group](https://img.shields.io/badge/Telegram-2CA5E0?style=flat-square&logo=telegram&logoColor=white)](https://t.me/reinstall_os)
 [![Github Sponsors](https://img.shields.io/badge/sponsor-30363D?style=flat-square&logo=GitHub-Sponsors&logoColor=#EA4AAA)](https://github.com/sponsors/bin456789)
 
@@ -342,7 +342,7 @@ zh-tw
 
 ```bash
 bash reinstall.sh windows \
-     --image-name "Windows 11 Enterprise LTSC 2024" \
+     --image-name "Windows 11 Enterprise LTSC 2024 Evaluation" \
      --iso "https://go.microsoft.com/fwlink/?linkid=2289029"
 ```
 
@@ -395,7 +395,7 @@ bash reinstall.sh windows \
 
 #### The following drivers will automatic download and install as needed, without the need for manual addition
 
-- Virtio ([Virtio][virtio-virtio]，[Alibaba Cloud][virtio-aliyun])
+- Virtio ([Virtio][virtio-virtio], [Alibaba Cloud][virtio-aliyun], [Tencent Cloud][virtio-qcloud], [GCP][virtio-gcp])
 - XEN ([~~XEN~~][xen-xen] (unsigned), [Citrix][xen-citrix], [AWS][xen-aws])
 - AWS ([ENA Network Adapter][aws-ena], [NVME Storage Controller][aws-nvme])
 - GCP ([gVNIC Network Adapter][gcp-gvnic], [GGA Display Adapter][gcp-gga])
@@ -404,6 +404,8 @@ bash reinstall.sh windows \
 
 [virtio-virtio]: https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/
 [virtio-aliyun]: https://www.alibabacloud.com/help/ecs/user-guide/install-the-virtio-driver-1
+[virtio-qcloud]: https://cloud.tencent.com/document/product/213/17815#b84b2032-752c-43c4-a509-73530b8f82ff
+[virtio-gcp]: https://console.cloud.google.com/storage/browser/gce-windows-drivers-public
 [xen-xen]: https://xenproject.org/resources/downloads/
 [xen-aws]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/xen-drivers-overview.html
 [xen-citrix]: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Upgrading_PV_drivers.html#win2008-citrix-upgrade
@@ -412,7 +414,7 @@ bash reinstall.sh windows \
 [gcp-gvnic]: https://cloud.google.com/compute/docs/networking/using-gvnic
 [gcp-gga]: https://cloud.google.com/compute/docs/instances/enable-instance-virtual-display
 [azure-mana]: https://learn.microsoft.com/azure/virtual-network/accelerated-networking-mana-windows
-[intel-vmd]: https://www.intel.com/content/www/us/en/download/720755/intel-rapid-storage-technology-driver-installation-software-with-intel-optane-memory-11th-up-to-13th-gen-platforms.html
+[intel-vmd]: https://www.intel.com/content/www/us/en/download/849936/intel-rapid-storage-technology-driver-installation-software-with-intel-optane-memory-12th-to-15th-gen-platforms.html
 [intel-nic-7-sha1]: https://www.intel.com/content/www/us/en/download/15590/29323/intel-network-adapter-driver-for-windows-7-final-release.html
 [intel-nic-7-sha256]: https://www.intel.com/content/www/us/en/download/15590/intel-network-adapter-driver-for-windows-7-final-release.html
 [intel-nic-8]: https://www.intel.com/content/www/us/en/download/16765/intel-network-adapter-driver-for-windows-8-final-release.html
